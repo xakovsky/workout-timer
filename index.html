@@ -24,21 +24,33 @@ body.work{background:#0b6b2e}body.rest{background:#1d4e9e}body.done{background:#
 button{flex:1;height:80px;font-size:22px;font-weight:700;border:0;border-radius:18px;color:#fff;background:#333}
 #start{background:#1faa4f}#pause{background:#d98a00}#reset{background:#c0392b}
 button:disabled{opacity:.35}
+#gear{position:absolute;right:calc(12px + env(safe-area-inset-right));top:calc(6px + env(safe-area-inset-top));flex:none;width:52px;height:52px;font-size:28px;border-radius:26px;background:rgba(0,0,0,.35)}
+#settings{position:fixed;inset:0;background:#111;display:none;flex-direction:column;padding:calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));gap:18px;z-index:9}
+#settings.open{display:flex}#settings h2{font-size:28px;text-align:center}
+.row{background:#222;border-radius:18px;padding:14px}.row label{display:block;font-size:18px;opacity:.8;margin-bottom:8px}
+.step{display:flex;align-items:center;gap:12px}.step button{flex:none;width:72px;height:72px;font-size:36px;background:#444}
+.step input{flex:1;min-width:0;height:72px;font-size:36px;text-align:center;border:0;border-radius:14px;background:#000;color:#fff;font-weight:700}
+.note{font-size:14px;opacity:.6;text-align:center}.sbtns{display:flex;gap:12px;margin-top:auto}#save{background:#1faa4f}
 </style></head>
 <body class="idle">
+<button id="gear" aria-label="Settings">⚙︎</button>
 <div id="top">Total <span id="total">00:00</span></div>
 <div id="main"><div id="phase">READY</div><div id="set">Set 1 of 4</div><div id="count">45</div></div>
 <div id="btns"><button id="start">Start</button><button id="pause" disabled>Pause</button><button id="reset">Reset</button></div>
+<div id="settings"><h2>Settings</h2><div class="row"><label for="in-work">Work (seconds, 5–600)</label><div class="step"><button data-k="work" data-d="-5">−</button><input id="in-work" type="number" inputmode="numeric"><button data-k="work" data-d="5">+</button></div></div><div class="row"><label for="in-rest">Rest (seconds, 0–300; 0 = no rest)</label><div class="step"><button data-k="rest" data-d="-5">−</button><input id="in-rest" type="number" inputmode="numeric"><button data-k="rest" data-d="5">+</button></div></div><div class="row"><label for="in-sets">Sets (1–20)</label><div class="step"><button data-k="sets" data-d="-1">−</button><input id="in-sets" type="number" inputmode="numeric"><button data-k="sets" data-d="1">+</button></div></div><div class="note">Saving resets the timer.</div><div class="sbtns"><button id="cancel">Cancel</button><button id="save">Save</button></div></div>
 <script>
-const SETS=4, WORK_SEC=45, REST_SEC=20;
-// Timeline of phases
-function buildPhases(){const p=[];for(let i=1;i<=SETS;i++){p.push({type:'work',set:i,dur:WORK_SEC});if(i<SETS)p.push({type:'rest',set:i,dur:REST_SEC});}return p;}
-const PHASES=buildPhases(), TOTAL=PHASES.reduce((a,b)=>a+b.dur,0);
+const DEFAULTS={sets:4,work:45,rest:20}, LIMITS={sets:[1,20],work:[5,600],rest:[0,300]};
+let SETS=DEFAULTS.sets, WORK_SEC=DEFAULTS.work, REST_SEC=DEFAULTS.rest;
+const clamp=(k,v)=>Math.min(LIMITS[k][1],Math.max(LIMITS[k][0],Math.round(Number(v)||0)));
+function configure(c){SETS=clamp('sets',c.sets);WORK_SEC=clamp('work',c.work);REST_SEC=clamp('rest',c.rest);PHASES=buildPhases();TOTAL=PHASES.reduce((a,b)=>a+b.dur,0);}
+function buildPhases(){const p=[];for(let i=1;i<=SETS;i++){p.push({type:'work',set:i,dur:WORK_SEC});if(i<SETS&&REST_SEC>0)p.push({type:'rest',set:i,dur:REST_SEC});}return p;}
+let PHASES=buildPhases(), TOTAL=PHASES.reduce((a,b)=>a+b.dur,0);
 // Pure: state at elapsed seconds
 function stateAt(t){let acc=0;for(let i=0;i<PHASES.length;i++){const ph=PHASES[i];if(t<acc+ph.dur)return{i,ph,remaining:acc+ph.dur-t};acc+=ph.dur;}return{i:PHASES.length,done:true,remaining:0};}
-if(typeof module!=='undefined'){module.exports={stateAt,PHASES,TOTAL};}
+if(typeof module!=='undefined'){module.exports={stateAt,configure,get PHASES(){return PHASES},get TOTAL(){return TOTAL}};}
 else{
 const $=id=>document.getElementById(id);
+try{const c=JSON.parse(localStorage.getItem('wt-settings')||'null');if(c)configure(c);}catch(e){}
 let ctx=null,running=false,accMs=0,startedAt=0,lastIdx=-1,raf=0,wake=null;
 function beep(freq,dur,delay=0){if(!ctx)return;const t=ctx.currentTime+delay,o=ctx.createOscillator(),g=ctx.createGain();o.type='square';o.frequency.value=freq;g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.5,t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);o.connect(g).connect(ctx.destination);o.start(t);o.stop(t+dur+0.05);}
 const startTone=()=>beep(1320,0.35), endTone=()=>beep(660,0.5), finish=()=>{beep(1000,.25,0);beep(1000,.25,.35);beep(1500,.6,.7);};
@@ -54,11 +66,16 @@ function render(){const t=elapsedMs()/1000,s=stateAt(t);$('total').textContent=f
  document.body.className=s.ph.type;$('phase').textContent=s.ph.type==='work'?'WORK':'REST';
  $('set').textContent=(s.ph.type==='work'?'Set ':'After set ')+s.ph.set+' of '+SETS;$('count').textContent=Math.ceil(s.remaining);
  if(running)raf=requestAnimationFrame(render);}
-function stop(finished){if(running){accMs+=performance.now()-startedAt;running=false;}cancelAnimationFrame(raf);unlock();$('start').disabled=!!finished;$('pause').disabled=true;}
+function stop(finished){if(running){accMs+=performance.now()-startedAt;running=false;}cancelAnimationFrame(raf);unlock();$('start').disabled=!!finished;$('pause').disabled=true;updGear();}
 $('start').onclick=()=>{if(!ctx){const AC=window.AudioContext||window.webkitAudioContext;ctx=new AC();}ctx.resume();
  const b=ctx.createBuffer(1,1,22050),src=ctx.createBufferSource();src.buffer=b;src.connect(ctx.destination);src.start(0);
- if(running)return;running=true;startedAt=performance.now();$('start').disabled=true;$('pause').disabled=false;$('start').textContent='Resume';lock();render();};
-$('pause').onclick=()=>{stop(false);};
+ if(running)return;running=true;startedAt=performance.now();$('start').disabled=true;$('pause').disabled=false;$('start').textContent='Resume';updGear();lock();render();};
+$('pause').onclick=()=>{stop(false);updGear();};
+function updGear(){$('gear').disabled=running;}
+$('gear').onclick=()=>{if(running)return;$('in-work').value=WORK_SEC;$('in-rest').value=REST_SEC;$('in-sets').value=SETS;$('settings').classList.add('open');};
+document.querySelectorAll('.step button').forEach(b=>b.onclick=()=>{const k=b.dataset.k,i=$('in-'+k);i.value=clamp(k,(Number(i.value)||0)+Number(b.dataset.d));});
+$('cancel').onclick=()=>$('settings').classList.remove('open');
+$('save').onclick=()=>{const c={work:clamp('work',$('in-work').value),rest:clamp('rest',$('in-rest').value),sets:clamp('sets',$('in-sets').value)};configure(c);try{localStorage.setItem('wt-settings',JSON.stringify(c));}catch(e){}$('settings').classList.remove('open');$('reset').onclick();};
 $('reset').onclick=()=>{stop(false);accMs=0;lastIdx=-1;document.body.className='idle';$('phase').textContent='READY';$('set').textContent='Set 1 of '+SETS;$('count').textContent=WORK_SEC;$('total').textContent='00:00';$('start').textContent='Start';$('start').disabled=false;};
 $('set').textContent='Set 1 of '+SETS;$('count').textContent=WORK_SEC;
 }
